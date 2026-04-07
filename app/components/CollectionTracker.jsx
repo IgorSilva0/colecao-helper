@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { POWER_TABLE, STAT_MAP } from "./poder";
 
 const DEFENSIVE_STATS = new Set([
   "HP", "Defesa", "Evasão", "Bloqueio", "Redução de Danos",
@@ -8,7 +9,7 @@ const DEFENSIVE_STATS = new Set([
   "Desfazer Ign. Redução de Dano",
   "Resistência ao Dano Crítico", "Resistência à Imobilidade",
   "Resistência à Queda", "Resistência à Investida",
-  "Resistência ao Atordoamento", "Resistência à Técnica Amp.",
+  "Resistência ao Atordoamento", "Resistência à Técnica Amp",
   "PVE Defesa", "PVP Defesa", "PVE Evasão", "PVP Redução de Dano",
   "PVE Ignorar Perfuração", "PVE Ignorar Acerto",
   "PVE Redução de Danos", "PVE Canc. Ig. Red Dano",
@@ -20,7 +21,7 @@ const OFFENSIVE_STATS = new Set([
   "Dano Adicional", "Aumentou todos os ataques",
   "Aumentou todas as técnicas Amp.", "Ign Res Taxa Crítica",
   "Ignorar Resistência a Danos Críticos", "Ignorar Resistência à Técnica Amp",
-  "Aum. Dano Ataque Norm.", "Cancelar Ignorar Perfuração",
+  "Aum. Dano Ataque Norm", "Cancelar Ignorar Perfuração",
   "PVE Todas as Técnicas Amp", "PVE Dano Crítico", "PVE Perfuração",
   "PVE Todos os Ataques", "PVE Precisão", "PVE Adicionar Dano",
   "PVE Dano de Ataque Normal UP", "PVP Dano Adicionado", "PVE Ignorar Bloqueio",
@@ -151,6 +152,15 @@ function CollectionCard({ collection: c }) {
     return [...map.entries()];
   }, [c.rewards, pct]);
 
+  function getPower(stat) {
+    const normalized = STAT_MAP[stat] ?? stat.replace(/^(PVE |PVP )/, "").trim();
+    return POWER_TABLE[normalized] ?? 0;
+  }
+
+  const totalPower = remainingRewards.reduce((acc, [stat, total]) => {
+    return acc + total * getPower(stat);
+  }, 0);
+
   return (
     <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-900 shadow-sm">
       <div className="flex items-center justify-between px-4 py-3 bg-zinc-50 dark:bg-zinc-800/60 gap-2">
@@ -165,7 +175,7 @@ function CollectionCard({ collection: c }) {
             ? "bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400"
             : "bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400"
         }`}>
-          {pct}%
+          {pct}% – <span className="text-emerald-600 dark:text-emerald-400">{totalPower.toLocaleString()} 💥</span>
         </span>
       </div>
 
@@ -303,7 +313,12 @@ export default function CollectionTracker() {
           .sort((a, b) => {
             if (sortBy === "name") return a.name.localeCompare(b.name);
             if (sortBy === "rewards") return b.rewards.filter(r => !r.applied).length - a.rewards.filter(r => !r.applied).length;
-            return a.progress - b.progress;
+            if (sortBy === "power") {
+              const powerA = getRemainingPower(a, POWER_TABLE);
+              const powerB = getRemainingPower(b, POWER_TABLE);
+              return powerB - powerA; // maior poder primeiro
+            }
+          return a.progress - b.progress;
           }),
       }))
       .filter(cat => cat.collections.length > 0);
@@ -340,6 +355,40 @@ export default function CollectionTracker() {
     });
     return [...map.entries()].sort((a, b) => b[1] - a[1]);
   }, [categories]);
+
+  function getRemainingPower(collection, powerTable) {
+    const pct = Math.round(collection.progress);
+    const map = new Map();
+    
+    const byForce = new Map();
+    collection.rewards.forEach(r => {
+      if (!byForce.has(r.force)) byForce.set(r.force, []);
+      byForce.get(r.force).push(r);
+    });
+
+    byForce.forEach(group => {
+      const inc = calcIncremental(group);
+      group.forEach((r, idx) => {
+        if (pct >= MILESTONE_PCT[idx]) return;
+        const stat = getStatName(r.description);
+        const normalized = STAT_MAP[stat] ?? stat.replace(/^(PVE |PVP )/, "").trim();
+        map.set(normalized, (map.get(normalized) ?? 0) + inc[idx]);
+      });
+    });
+
+    return [...map.entries()].reduce((acc, [stat, total]) => {
+      const powerPerUnit = powerTable[stat] ?? 0;
+      return acc + total * powerPerUnit;
+    }, 0);
+  }
+
+  const totalPendingPower = useMemo(() => {
+    return summaryRewards.reduce((acc, [stat, total]) => {
+      const normalized = STAT_MAP[stat] ?? stat.replace(/^(PVE |PVP )/, "").trim();
+      const powerPerUnit = POWER_TABLE[normalized] ?? 0;
+      return acc + total * powerPerUnit;
+    }, 0);
+  }, [summaryRewards]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -408,10 +457,13 @@ export default function CollectionTracker() {
           >
             <option value="progress">Ordenar: Progresso ↑</option>
             <option value="name">Ordenar: Nome A–Z</option>
+            <option value="power">Ordenar: Maior Poder Pend.</option>
             {/* <option value="rewards">Ordenar: Mais Recompensas</option> */}
           </select>
-          <span className="ml-auto text-xs text-zinc-400">
-            Exibindo <span className="font-bold text-blue-600">{categories.reduce((acc, cat) => acc + cat.collections.length, 0)}</span> coleção
+          <span className="ml-auto text-xs text-zinc-400 text-right">
+            Poder pendente: <span className="font-bold text-red-600">{totalPendingPower.toLocaleString()} 💥</span>
+            <br/>
+            Exibindo <span className="font-bold text-blue-600">{categories.reduce((acc, cat) => acc + cat.collections.length, 0)}</span> coleções
           </span>
           <button
             onClick={() => setShowSummary(true)}
@@ -430,6 +482,7 @@ export default function CollectionTracker() {
                 <h2 className="font-bold text-zinc-900 dark:text-white text-base">📊 Resumo de Recompensas</h2>
                 <p className="text-xs text-zinc-400 mt-0.5">Total ainda a ganhar das coleções visíveis</p>
               </div>
+              <p className="text-xs text-zinc-400 mt-1">Poder pendente total: <span className="font-bold text-emerald-600">{totalPendingPower.toLocaleString()} 💥</span></p>
               <button onClick={() => setShowSummary(false)} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xl font-bold leading-none">×</button>
             </div>
             <div className="overflow-y-auto px-6 py-4 flex flex-col gap-3">
