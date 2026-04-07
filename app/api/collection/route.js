@@ -34,7 +34,6 @@ export async function GET(request) {
   }
 
   const collectionData = await collectionRes.json();
-console.log(collectionData);
   return Response.json({
     character: armoryData.character,
     ...collectionData,
