@@ -46,10 +46,15 @@ function getCollectionType(collection) {
 }
 
 function calcIncremental(group) {
-  const v0 = group[0]?.value ?? 0;
-  const v1 = group[1]?.value ?? 0;
-  const v2 = group[2]?.value ?? 0;
-  return [v0, v1, v2 - v1 - v0];
+  const v0 = group[0]?.value ?? 0; // total até 30%
+  const v1 = group[1]?.value ?? 0; // total até 60%
+  const v2 = group[2]?.value ?? 0; // total até 100%
+
+  return [
+    v0,        // ganho ao chegar em 30%
+    v1 - v0,   // ganho ao chegar em 60%
+    v2 - v1    // ganho ao chegar em 100%
+  ];
 }
 
 const MILESTONE_PCT = [30, 60, 100];
@@ -61,6 +66,7 @@ function RewardMilestones({ rewards, progress }) {
     rewards.forEach(r => {
       if (!map.has(r.force)) map.set(r.force, []);
       map.get(r.force).push(r);
+      map.get(r.force).sort((a,b)=>a.force - b.force);
     });
     return [...map.values()];
   }, [rewards]);
