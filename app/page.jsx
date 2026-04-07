@@ -1,4 +1,5 @@
 import CollectionTracker from "./components/CollectionTracker";
+import Image from "next/image";
 
 export default function Home() {
   return (
@@ -12,9 +13,17 @@ export default function Home() {
             target="_blank"
             rel="noopener noreferrer"
           >
-            Neo -
-          </a>{" "}
+            Neo
+          </a> - {" "}
           Coleção Helper
+          <Image
+            src="/ale.png"
+            alt="Cabal Neo Logo"
+            className="inline px-2"
+            width={100}
+            height={100}
+            priority
+          />
         </h1>
 
         <CollectionTracker />
