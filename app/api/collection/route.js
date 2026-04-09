@@ -59,23 +59,26 @@ export async function GET(request) {
       }
     });
 
-    await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
+    await page.goto(url, { waitUntil: "networkidle2", timeout: 45000 });
 
-    // Poll for the collection payload for up to 15s
+    // Poll up to 30s for the payload containing collection data
     let charPayload = null;
-    const deadline = Date.now() + 15000;
+    const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
       charPayload = rscPayloads.find(p =>
-        p.url.includes("/character") &&
-        p.text.includes("\"tId\"") &&
-        p.text.includes("\"collections\"")
+        p.text.includes('"tId"') &&
+        p.text.includes('"collections"')
       );
       if (charPayload) break;
       await new Promise(r => setTimeout(r, 500));
     }
 
     if (!charPayload) {
-      return Response.json({ error: "Collection payload not found" }, { status: 500 });
+      return Response.json({
+        error: "Collection payload not found",
+        payloadCount: rscPayloads.length,
+        urls: rscPayloads.map(p => p.url),
+      }, { status: 500 });
     }
 
     // Parse RSC format — each line is `id:value`
