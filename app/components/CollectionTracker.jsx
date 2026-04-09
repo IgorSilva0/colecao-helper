@@ -282,10 +282,13 @@ export default function CollectionTracker() {
     setCharacter(null);
     setValues(null);
     try {
-      const res = await fetch(`/api/collection?name=${encodeURIComponent(name)}`);
+      const res = await fetch(`https://neo-scraper-production-6a9c.up.railway.app/collection?name=${encodeURIComponent(name)}`);
       const json = await res.json();
-      const payload = Object.values(json).find(v => Array.isArray(v?.data) && Array.isArray(v?.values)) ?? json;
-      if (!res.ok) throw new Error(payload.error || `Error ${res.status}`);
+      if (!res.ok) throw new Error(json.error || `Error ${res.status}`);
+
+      // Find the payload that has data + values
+      const payload = Object.values(json).find(v => v?.data && v?.values) ?? json;
+
       setCharacter(payload.character || null);
       setData(payload.data || []);
       setValues(payload.values || []);
