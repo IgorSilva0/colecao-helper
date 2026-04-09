@@ -46,19 +46,20 @@ function getCollectionType(collection) {
 }
 
 function calcIncremental(group) {
-  const v0 = group[0]?.value ?? 0; // total até 30%
-  const v1 = group[1]?.value ?? 0; // total até 60%
-  const v2 = group[2]?.value ?? 0; // total até 100%
-
-  return [
-    v0,        // ganho ao chegar em 30%
-    v1 - v0,   // ganho ao chegar em 60%
-    v2 - v1    // ganho ao chegar em 100%
-  ];
+  const v0 = group[0]?.value ?? 0;
+  const v1 = group[1]?.value ?? 0;
+  const v2 = group[2]?.value ?? 0;
+  return [v0, v1 - v0, v2 - v1];
 }
 
 const MILESTONE_PCT = [30, 60, 100];
 const MILESTONE_LABELS = ["30%", "60%", "100%"];
+
+function parseStatLine(str) {
+  const match = str.match(/^(.+?)\s+\+?([\d.]+)%?$/);
+  if (!match) return null;
+  return { stat: match[1].trim(), value: parseFloat(match[2]) };
+}
 
 function RewardMilestones({ rewards, progress }) {
   const groups = useMemo(() => {
@@ -66,7 +67,7 @@ function RewardMilestones({ rewards, progress }) {
     rewards.forEach(r => {
       if (!map.has(r.force)) map.set(r.force, []);
       map.get(r.force).push(r);
-      map.get(r.force).sort((a,b)=>a.force - b.force);
+      map.get(r.force).sort((a, b) => a.force - b.force);
     });
     return [...map.values()];
   }, [rewards]);
@@ -171,9 +172,7 @@ function CollectionCard({ collection: c }) {
     <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-900 shadow-sm">
       <div className="flex items-center justify-between px-4 py-3 bg-zinc-50 dark:bg-zinc-800/60 gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-base shrink-0">
-            {type === "offensive" ? "⚔️" : "🛡️"}
-          </span>
+          <span className="text-base shrink-0">{type === "offensive" ? "⚔️" : "🛡️"}</span>
           <span className="font-semibold text-sm text-zinc-800 dark:text-zinc-100 truncate">{c.name}</span>
         </div>
         <span className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${
@@ -267,6 +266,7 @@ export default function CollectionTracker() {
   const [character, setCharacter] = useState(null);
   const [inputName, setInputName] = useState("");
   const [data, setData] = useState(null);
+  const [values, setValues] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [sortBy, setSortBy] = useState("progress");
@@ -274,17 +274,21 @@ export default function CollectionTracker() {
   const [typeFilter, setTypeFilter] = useState("");
   const [catFilter, setCatFilter] = useState("");
   const [showSummary, setShowSummary] = useState(false);
+  const [showTotalPower, setShowTotalPower] = useState(false);
 
   async function fetchData(name) {
     setLoading(true);
     setError(null);
     setCharacter(null);
+    setValues(null);
     try {
       const res = await fetch(`/api/collection?name=${encodeURIComponent(name)}`);
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || `Error ${res.status}`);
-      setCharacter(json.character || null);
-      setData(json.data || []);
+      const payload = Object.values(json).find(v => Array.isArray(v?.data) && Array.isArray(v?.values)) ?? json;
+      if (!res.ok) throw new Error(payload.error || `Error ${res.status}`);
+      setCharacter(payload.character || null);
+      setData(payload.data || []);
+      setValues(payload.values || []);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -296,6 +300,122 @@ export default function CollectionTracker() {
     e.preventDefault();
     if (inputName.trim()) fetchData(inputName.trim());
   }
+
+  function getRemainingPower(collection) {
+    const pct = Math.round(collection.progress);
+    const map = new Map();
+    const byForce = new Map();
+    collection.rewards.forEach(r => {
+      if (!byForce.has(r.force)) byForce.set(r.force, []);
+      byForce.get(r.force).push(r);
+    });
+    byForce.forEach(group => {
+      const inc = calcIncremental(group);
+      group.forEach((r, idx) => {
+        if (pct >= MILESTONE_PCT[idx]) return;
+        const stat = getStatName(r.description);
+        const normalized = STAT_MAP[stat] ?? stat.replace(/^(PVE |PVP )/, "").trim();
+        map.set(normalized, (map.get(normalized) ?? 0) + inc[idx]);
+      });
+    });
+    return [...map.entries()].reduce((acc, [stat, total]) => {
+      return acc + total * (POWER_TABLE[stat] ?? 0);
+    }, 0);
+  }
+
+  // Power already earned from completed milestones
+  const earnedCollectionPower = useMemo(() => {
+    if (!data) return 0;
+    return data.reduce((catAcc, cat) => {
+      return catAcc + cat.collections.reduce((colAcc, c) => {
+        const byForce = new Map();
+        c.rewards.forEach(r => {
+          if (!byForce.has(r.force)) byForce.set(r.force, []);
+          byForce.get(r.force).push(r);
+        });
+        let power = 0;
+        byForce.forEach(group => {
+          const appliedRewards = group.filter(r => r.applied);
+          if (!appliedRewards.length) return;
+          const highest = appliedRewards.reduce((a, b) => a.value > b.value ? a : b);
+          const stat = getStatName(highest.description);
+          const normalized = STAT_MAP[stat] ?? stat.replace(/^(PVE |PVP )/, "").trim();
+          power += highest.value * (POWER_TABLE[normalized] ?? 0);
+        });
+        return colAcc + power;
+      }, 0);
+    }, 0);
+  }, [data]);
+
+  // Total power if all collections were 100%
+  const totalCollectionPower = useMemo(() => {
+    if (!data) return 0;
+    return data.reduce((catAcc, cat) => {
+      return catAcc + cat.collections.reduce((colAcc, c) => {
+        const byForce = new Map();
+        c.rewards.forEach(r => {
+          if (!byForce.has(r.force)) byForce.set(r.force, []);
+          byForce.get(r.force).push(r);
+        });
+        let power = 0;
+        byForce.forEach(group => {
+          const top = group[group.length - 1]?.value ?? 0;
+          const stat = getStatName(group[0].description);
+          const normalized = STAT_MAP[stat] ?? stat.replace(/^(PVE |PVP )/, "").trim();
+          power += top * (POWER_TABLE[normalized] ?? 0);
+        });
+        return colAcc + power;
+      }, 0);
+    }, 0);
+  }, [data]);
+
+  // Parse values array into offensive/defensive with earned overlay info
+  const parsedValues = useMemo(() => {
+    if (!data) return { offensive: [], defensive: [] };
+
+    const totalMap = new Map();
+    const earnedMap = new Map();
+
+    data.forEach(cat => {
+      cat.collections.forEach(c => {
+        const byForce = new Map();
+        c.rewards.forEach(r => {
+          if (!byForce.has(r.force)) byForce.set(r.force, []);
+          byForce.get(r.force).push(r);
+        });
+        byForce.forEach(group => {
+          const stat = getStatName(group[0].description);
+
+          // Total: last reward value (100% milestone) — cumulative
+          const top = group[group.length - 1].value;
+          totalMap.set(stat, (totalMap.get(stat) ?? 0) + top);
+
+          // Earned: highest applied reward value — cumulative
+          const appliedRewards = group.filter(r => r.applied);
+          if (appliedRewards.length) {
+            const highest = appliedRewards.reduce((a, b) => a.value > b.value ? a : b);
+            earnedMap.set(stat, (earnedMap.get(stat) ?? 0) + highest.value);
+          }
+        });
+      });
+    });
+
+    const offensive = [];
+    const defensive = [];
+    for (const [stat, total] of totalMap.entries()) {
+      const earned = earnedMap.get(stat) ?? 0;
+      const earnedPct = total > 0 ? Math.min((earned / total) * 100, 100) : 0;
+      const entry = { stat, value: total, earned, earnedPct };
+      if (DEFENSIVE_STATS.has(stat)) defensive.push(entry);
+      else offensive.push(entry);
+    }
+
+    // Sort by value descending
+    offensive.sort((a, b) => b.value - a.value);
+    defensive.sort((a, b) => b.value - a.value);
+
+    return { offensive, defensive };
+  }, [data]);
 
   const categories = useMemo(() => {
     if (!data) return [];
@@ -319,12 +439,8 @@ export default function CollectionTracker() {
           .sort((a, b) => {
             if (sortBy === "name") return a.name.localeCompare(b.name);
             if (sortBy === "rewards") return b.rewards.filter(r => !r.applied).length - a.rewards.filter(r => !r.applied).length;
-            if (sortBy === "power") {
-              const powerA = getRemainingPower(a, POWER_TABLE);
-              const powerB = getRemainingPower(b, POWER_TABLE);
-              return powerB - powerA; // maior poder primeiro
-            }
-          return a.progress - b.progress;
+            if (sortBy === "power") return getRemainingPower(b) - getRemainingPower(a);
+            return a.progress - b.progress;
           }),
       }))
       .filter(cat => cat.collections.length > 0);
@@ -362,39 +478,9 @@ export default function CollectionTracker() {
     return [...map.entries()].sort((a, b) => b[1] - a[1]);
   }, [categories]);
 
-  function getRemainingPower(collection, powerTable) {
-    const pct = Math.round(collection.progress);
-    const map = new Map();
-    
-    const byForce = new Map();
-    collection.rewards.forEach(r => {
-      if (!byForce.has(r.force)) byForce.set(r.force, []);
-      byForce.get(r.force).push(r);
-    });
-
-    byForce.forEach(group => {
-      const inc = calcIncremental(group);
-      group.forEach((r, idx) => {
-        if (pct >= MILESTONE_PCT[idx]) return;
-        const stat = getStatName(r.description);
-        const normalized = STAT_MAP[stat] ?? stat.replace(/^(PVE |PVP )/, "").trim();
-        map.set(normalized, (map.get(normalized) ?? 0) + inc[idx]);
-      });
-    });
-
-    return [...map.entries()].reduce((acc, [stat, total]) => {
-      const powerPerUnit = powerTable[stat] ?? 0;
-      return acc + total * powerPerUnit;
-    }, 0);
-  }
-
   const totalPendingPower = useMemo(() => {
-    return summaryRewards.reduce((acc, [stat, total]) => {
-      const normalized = STAT_MAP[stat] ?? stat.replace(/^(PVE |PVP )/, "").trim();
-      const powerPerUnit = POWER_TABLE[normalized] ?? 0;
-      return acc + total * powerPerUnit;
-    }, 0);
-  }, [summaryRewards]);
+    return totalCollectionPower - earnedCollectionPower;
+  }, [totalCollectionPower, earnedCollectionPower]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -468,7 +554,7 @@ export default function CollectionTracker() {
           </select>
           <span className="ml-auto text-xs text-zinc-400 text-right">
             Poder pendente: <span className="font-bold text-red-600">{totalPendingPower.toLocaleString()} 💥</span>
-            <br/>
+            <br />
             Exibindo <span className="font-bold text-blue-600">{categories.reduce((acc, cat) => acc + cat.collections.length, 0)}</span> coleções
           </span>
           <button
@@ -477,9 +563,18 @@ export default function CollectionTracker() {
           >
             📊 Resumo de Recompensas
           </button>
+          {values?.length > 0 && (
+            <button
+              onClick={() => setShowTotalPower(true)}
+              className="bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+            >
+              🏆 Progresso da Coleção
+            </button>
+          )}
         </div>
       )}
 
+      {/* Resumo de Recompensas modal */}
       {showSummary && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowSummary(false)}>
           <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
@@ -488,7 +583,6 @@ export default function CollectionTracker() {
                 <h2 className="font-bold text-zinc-900 dark:text-white text-base">📊 Resumo de Recompensas</h2>
                 <p className="text-xs text-zinc-400 mt-0.5">Total ainda a ganhar das coleções visíveis</p>
               </div>
-              <p className="text-xs text-zinc-400 mt-1">Poder pendente total: <span className="font-bold text-emerald-600">{totalPendingPower.toLocaleString()} 💥</span></p>
               <button onClick={() => setShowSummary(false)} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xl font-bold leading-none">×</button>
             </div>
             <div className="overflow-y-auto px-6 py-4 flex flex-col gap-3">
@@ -507,6 +601,79 @@ export default function CollectionTracker() {
                     <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400 w-16 text-right">+{total.toLocaleString('pt-BR')}</span>
                   </div>
                 ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Poder Total da Coleção modal */}
+      {showTotalPower && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowTotalPower(false)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 dark:border-zinc-800">
+              <div>
+                <h2 className="font-bold text-zinc-900 dark:text-white text-base">📊 Progresso das Recompensas de Coleção</h2>
+                <p className="text-xs text-zinc-400 mt-0.5">Recompensas aplicadas vs total disponível nas coleções</p>
+              </div>
+              <button onClick={() => setShowTotalPower(false)} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xl font-bold leading-none">×</button>
+            </div>
+
+            {/* Power summary header */}
+            <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-violet-50 dark:bg-violet-950/20 flex gap-6">
+              <div className="flex-1">
+                <p className="text-xs text-zinc-400 uppercase tracking-wide mb-1">Poder Total da Coleção</p>
+                <p className="text-2xl font-black text-violet-600 dark:text-violet-400">{totalCollectionPower.toLocaleString('pt-BR')} 💥</p>
+              </div>
+              <div className="flex-1">
+                <p className="text-xs text-zinc-400 uppercase tracking-wide mb-1">Poder Já Conquistado</p>
+                <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
+                  {earnedCollectionPower.toLocaleString('pt-BR')} 💥
+                  <span className="text-sm font-semibold text-zinc-400 ml-2">
+                    ({totalCollectionPower > 0 ? Math.round((earnedCollectionPower / totalCollectionPower) * 100) : 0}%)
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-y-auto px-6 py-4 flex flex-col gap-6">
+              {parsedValues.offensive.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-3">⚔️ Ofensivo</p>
+                  <div className="flex flex-col gap-2">
+                    {parsedValues.offensive.map(({ stat, value, earned, earnedPct }) => (
+                      <div key={stat} className="flex items-center gap-4">
+                        <span className="text-sm text-zinc-700 dark:text-zinc-300 w-48 shrink-0">{stat}</span>
+                        <div className="flex-1 h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden relative">
+                          <div className="absolute left-0 top-0 h-full w-full bg-gradient-to-r from-red-400 to-orange-500 rounded-full" />
+                          <div className="absolute left-0 top-0 h-full bg-gradient-to-r from-emerald-400 to-emerald-500 rounded-full" style={{ width: `${earnedPct}%` }} />
+                        </div>
+                        <span className="text-sm w-16 text-right font-bold text-emerald-500">
+                          {Math.round(earnedPct)}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {parsedValues.defensive.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-3">🛡️ Defensivo</p>
+                  <div className="flex flex-col gap-2">
+                    {parsedValues.defensive.map(({ stat, value, earned, earnedPct }) => (
+                      <div key={stat} className="flex items-center gap-4">
+                        <span className="text-sm text-zinc-700 dark:text-zinc-300 w-48 shrink-0">{stat}</span>
+                        <div className="flex-1 h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden relative">
+                          <div className="absolute left-0 top-0 h-full w-full bg-gradient-to-r from-blue-400 to-violet-500 rounded-full" />
+                          <div className="absolute left-0 top-0 h-full bg-gradient-to-r from-emerald-400 to-emerald-500 rounded-full" style={{ width: `${earnedPct}%` }} />
+                        </div>
+                        <span className="text-sm w-16 text-right font-bold text-emerald-500">
+                          {Math.round(earnedPct)}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           </div>

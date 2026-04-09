@@ -1,3 +1,5 @@
+'use client';
+
 import CollectionTracker from "./components/CollectionTracker";
 import Image from "next/image";
 
