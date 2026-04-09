@@ -15,73 +15,63 @@ export async function GET(request) {
 
   let browser;
   try {
-    const isDev = process.env.NODE_ENV === "development";
-
-    browser = await puppeteer.launch(
-      isDev
-        ? {
-            executablePath: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-            headless: "new",
-          }
-        : {
-            args: chromium.args,
-            defaultViewport: chromium.defaultViewport,
-            executablePath: await chromium.executablePath(
-              "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar"
-            ),
-            headless: chromium.headless,
-          }
+    const executablePath = await chromium.executablePath(
+      "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar"
     );
+    console.log("chromium executablePath:", executablePath);
+
+    browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath,
+      headless: chromium.headless,
+    });
 
     const page = await browser.newPage();
 
-    await page.setRequestInterception(true);
-    page.on("request", (r) => {
-      if (["image", "stylesheet", "font", "media"].includes(r.resourceType())) {
-        r.abort();
-      } else {
-        r.continue();
-      }
-    });
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    );
 
     const rscPayloads = [];
     page.on("response", async (response) => {
-      const resUrl = response.url();
       const contentType = response.headers()["content-type"] ?? "";
       if (contentType.includes("text/x-component")) {
         try {
           const buffer = await response.buffer();
           const text = new TextDecoder("utf-8").decode(buffer);
-          rscPayloads.push({ url: resUrl, text });
+          rscPayloads.push({ url: response.url(), text });
         } catch {
           // ignore
         }
       }
     });
 
-    await page.goto(url, { waitUntil: "networkidle2", timeout: 45000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
 
     // Poll up to 30s for the payload containing collection data
     let charPayload = null;
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
-      charPayload = rscPayloads.find(p =>
-        p.text.includes('"tId"') &&
-        p.text.includes('"collections"')
+      charPayload = rscPayloads.find(
+        (p) => p.text.includes('"tId"') && p.text.includes('"collections"')
       );
       if (charPayload) break;
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 500));
     }
 
     if (!charPayload) {
-      return Response.json({
-        error: "Collection payload not found",
-        payloadCount: rscPayloads.length,
-        urls: rscPayloads.map(p => p.url),
-      }, { status: 500 });
+      return Response.json(
+        {
+          error: "Collection payload not found",
+          payloadCount: rscPayloads.length,
+          urls: rscPayloads.map((p) => p.url),
+        },
+        { status: 500 }
+      );
     }
 
-    // Parse RSC format — each line is `id:value`
+    // Parse RSC format — cada linha é `id:value`
     const parsed = {};
     for (const line of charPayload.text.split("\n")) {
       const colonIdx = line.indexOf(":");
@@ -95,24 +85,26 @@ export async function GET(request) {
       }
     }
 
-    // Fix mojibake on all string values
     const fixEncoding = (val) => {
       if (typeof val === "string") {
         try { return decodeURIComponent(escape(val)); } catch { return val; }
       }
       if (Array.isArray(val)) return val.map(fixEncoding);
       if (val && typeof val === "object") {
-        return Object.fromEntries(Object.entries(val).map(([k, v]) => [k, fixEncoding(v)]));
+        return Object.fromEntries(
+          Object.entries(val).map(([k, v]) => [k, fixEncoding(v)])
+        );
       }
       return val;
     };
 
-    const fixed = fixEncoding(parsed);
-
-    return Response.json(fixed);
+    return Response.json(fixEncoding(parsed));
 
   } catch (err) {
-    return Response.json({ error: "Puppeteer failed", detail: err.message }, { status: 500 });
+    return Response.json(
+      { error: "Puppeteer failed", detail: err.message },
+      { status: 500 }
+    );
   } finally {
     if (browser) await browser.close();
   }
