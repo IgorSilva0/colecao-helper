@@ -29,47 +29,51 @@ export async function GET(request) {
       window.chrome = { runtime: {} };
     });
 
+    // Usa CDP diretamente para capturar response bodies
+    const client = await page.createCDPSession();
+    await client.send("Network.enable");
+
     const rscPayloads = [];
-    const allNetworkResponses = [];
-    page.on("response", async (response) => {
-      const contentType = response.headers()["content-type"] ?? "";
-      const status = response.status();
-      allNetworkResponses.push({ url: response.url(), contentType, status });
-      if (contentType.includes("text/x-component")) {
-        try {
-          const buffer = await response.buffer();
-          const text = new TextDecoder("utf-8").decode(buffer);
-          rscPayloads.push({ url: response.url(), text });
-        } catch {
-          // ignore
-        }
+    const requestMap = {};
+
+    client.on("Network.responseReceived", (event) => {
+      const ct = event.response.headers["content-type"] ?? "";
+      if (ct.includes("text/x-component")) {
+        requestMap[event.requestId] = true;
       }
     });
 
-    await page.goto(url, { waitUntil: "networkidle2", timeout: 45000 });
+    client.on("Network.loadingFinished", async (event) => {
+      if (!requestMap[event.requestId]) return;
+      try {
+        const { body } = await client.send("Network.getResponseBody", {
+          requestId: event.requestId,
+        });
+        rscPayloads.push(body);
+      } catch {
+        // ignore
+      }
+    });
+
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
 
     // Poll up to 30s for the payload containing collection data
     let charPayload = null;
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
       charPayload = rscPayloads.find(
-        (p) => p.text.includes('"tId"') && p.text.includes('"collections"')
+        (p) => p.includes('"tId"') && p.includes('"collections"')
       );
       if (charPayload) break;
       await new Promise((r) => setTimeout(r, 500));
     }
 
     if (!charPayload) {
-      const html = await page.content();
-      const allResponses = rscPayloads.map((p) => ({ url: p.url, preview: p.text.slice(0, 200) }));
       return Response.json(
         {
           error: "Collection payload not found",
           payloadCount: rscPayloads.length,
-          urls: rscPayloads.map((p) => p.url),
-          allResponses,
-          allNetworkResponses: allNetworkResponses.slice(0, 40),
-          htmlSnippet: html.slice(0, 2000),
+          previews: rscPayloads.map((p) => p.slice(0, 100)),
         },
         { status: 500 }
       );
@@ -77,7 +81,7 @@ export async function GET(request) {
 
     // Parse RSC format — cada linha é `id:value`
     const parsed = {};
-    for (const line of charPayload.text.split("\n")) {
+    for (const line of charPayload.split("\n")) {
       const colonIdx = line.indexOf(":");
       if (colonIdx === -1) continue;
       const id = line.slice(0, colonIdx);
