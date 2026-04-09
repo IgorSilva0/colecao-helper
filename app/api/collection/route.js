@@ -30,8 +30,11 @@ export async function GET(request) {
     });
 
     const rscPayloads = [];
+    const allNetworkResponses = [];
     page.on("response", async (response) => {
       const contentType = response.headers()["content-type"] ?? "";
+      const status = response.status();
+      allNetworkResponses.push({ url: response.url(), contentType, status });
       if (contentType.includes("text/x-component")) {
         try {
           const buffer = await response.buffer();
@@ -57,11 +60,16 @@ export async function GET(request) {
     }
 
     if (!charPayload) {
+      const html = await page.content();
+      const allResponses = rscPayloads.map((p) => ({ url: p.url, preview: p.text.slice(0, 200) }));
       return Response.json(
         {
           error: "Collection payload not found",
           payloadCount: rscPayloads.length,
           urls: rscPayloads.map((p) => p.url),
+          allResponses,
+          allNetworkResponses: allNetworkResponses.slice(0, 40),
+          htmlSnippet: html.slice(0, 2000),
         },
         { status: 500 }
       );
