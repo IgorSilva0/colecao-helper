@@ -629,9 +629,6 @@ export default function CollectionTracker() {
                 <p className="text-xs text-zinc-400 uppercase tracking-wide mb-1">Poder Já Conquistado</p>
                 <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
                   {earnedCollectionPower.toLocaleString('pt-BR')} 💥
-                  <span className="text-sm font-semibold text-zinc-400 ml-2">
-                    ({totalCollectionPower > 0 ? Math.round((earnedCollectionPower / totalCollectionPower) * 100) : 0}%)
-                  </span>
                 </p>
               </div>
             </div>
