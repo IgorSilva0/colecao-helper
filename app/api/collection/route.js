@@ -1,116 +1,75 @@
+import { NextResponse } from "next/server";
 import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium-min";
 
 export const maxDuration = 60;
+export const dynamic = "force-dynamic";
 
-export async function GET(request) {
-  const { searchParams } = new URL(request.url);
-  const name = searchParams.get("name");
-
+export async function GET(req) {
+  const name = req.nextUrl.searchParams.get("name");
   if (!name) {
-    return Response.json({ error: "Missing character name" }, { status: 400 });
+    return NextResponse.json({ error: "Missing name" }, { status: 400 });
   }
 
-  const url = `https://www.neogames.online/character?name=${encodeURIComponent(name)}&menu=information&tab=collection&subtab=0`;
+  let browser = null;
 
-  let browser;
   try {
-    browser = await puppeteer.connect({
-      browserWSEndpoint: `wss://production-sfo.browserless.io?token=${process.env.BROWSERLESS_TOKEN}`,
+    const isDev = process.env.NODE_ENV === "development";
+
+    browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: isDev
+        ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        : await chromium.executablePath(
+            "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar"
+          ),
+      headless: true,
     });
 
     const page = await browser.newPage();
 
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-    );
+    // Wait for the specific response that contains data+values
+    const collectionData = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Timeout waiting for collection data")), 25000);
 
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-      window.chrome = { runtime: {} };
+      page.on("response", async (response) => {
+        const url = response.url();
+        const contentType = response.headers()["content-type"] || "";
+
+        if (!url.includes("/character") || !contentType.includes("text/x-component")) return;
+
+        try {
+          const text = await response.text();
+          const parsed = {};
+          for (const line of text.split("\n")) {
+            const match = line.match(/^([^:]+):(.+)$/);
+            if (!match) continue;
+            try { parsed[match[1]] = JSON.parse(match[2]); }
+            catch { parsed[match[1]] = match[2]; }
+          }
+          const payload = parsed["1"];
+          // Only resolve when we get the response that has both data and values
+          if (payload?.data && payload?.values) {
+            clearTimeout(timeout);
+            resolve(payload);
+          }
+        } catch (e) {
+          // ignore — some responses can't be read, keep waiting
+        }
+      });
+
+      page.goto(
+        `https://www.neogames.online/character?name=${encodeURIComponent(name)}&menu=information&tab=collection`,
+        { waitUntil: "networkidle0", timeout: 30000 }
+      ).catch(reject);
     });
 
-    // Usa CDP diretamente para capturar response bodies
-    const client = await page.createCDPSession();
-    await client.send("Network.enable");
-
-    const rscPayloads = [];
-    const requestMap = {};
-
-    client.on("Network.responseReceived", (event) => {
-      const ct = event.response.headers["content-type"] ?? "";
-      if (ct.includes("text/x-component")) {
-        requestMap[event.requestId] = true;
-      }
-    });
-
-    client.on("Network.loadingFinished", async (event) => {
-      if (!requestMap[event.requestId]) return;
-      try {
-        const { body } = await client.send("Network.getResponseBody", {
-          requestId: event.requestId,
-        });
-        rscPayloads.push(body);
-      } catch {
-        // ignore
-      }
-    });
-
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-
-    // Poll up to 30s for the payload containing collection data
-    let charPayload = null;
-    const deadline = Date.now() + 30000;
-    while (Date.now() < deadline) {
-      charPayload = rscPayloads.find(
-        (p) => p.includes('"tId"') && p.includes('"collections"')
-      );
-      if (charPayload) break;
-      await new Promise((r) => setTimeout(r, 500));
-    }
-
-    if (!charPayload) {
-      return Response.json(
-        {
-          error: "Collection payload not found",
-          payloadCount: rscPayloads.length,
-          previews: rscPayloads.map((p) => p.slice(0, 100)),
-        },
-        { status: 500 }
-      );
-    }
-
-    // Parse RSC format — cada linha é `id:value`
-    const parsed = {};
-    for (const line of charPayload.split("\n")) {
-      const colonIdx = line.indexOf(":");
-      if (colonIdx === -1) continue;
-      const id = line.slice(0, colonIdx);
-      const raw = line.slice(colonIdx + 1);
-      try {
-        parsed[id] = JSON.parse(raw);
-      } catch {
-        // not valid JSON, skip
-      }
-    }
-
-    const fixEncoding = (val) => {
-      if (typeof val === "string") {
-        try { return decodeURIComponent(escape(val)); } catch { return val; }
-      }
-      if (Array.isArray(val)) return val.map(fixEncoding);
-      if (val && typeof val === "object") {
-        return Object.fromEntries(
-          Object.entries(val).map(([k, v]) => [k, fixEncoding(v)])
-        );
-      }
-      return val;
-    };
-
-    return Response.json(fixEncoding(parsed));
-
+    return NextResponse.json(collectionData);
   } catch (err) {
-    return Response.json(
-      { error: "Puppeteer failed", detail: err.message },
+    console.error("Puppeteer error:", err);
+    return NextResponse.json(
+      { error: err.message || "Failed to fetch data" },
       { status: 500 }
     );
   } finally {
