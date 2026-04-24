@@ -282,7 +282,7 @@ export default function CollectionTracker() {
     setCharacter(null);
     setValues(null);
     try {
-      const res = await fetch(`https://neo-scraper-production-6a9c.up.railway.app/collection?name=${encodeURIComponent(name)}`);
+      const res = await fetch(`https://neo-scraper-production-9b11.up.railway.app/collection?name=${encodeURIComponent(name)}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `Error ${res.status}`);
 
