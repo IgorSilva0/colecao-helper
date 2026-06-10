@@ -481,13 +481,69 @@ export default function CollectionTracker() {
     return [...map.entries()].sort((a, b) => b[1] - a[1]);
   }, [categories]);
 
+  async function loadLocal() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/collection.json");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setCharacter(json.data.character || null);
+      setData(json.data.data || []);
+      setValues(json.data.values || null);
+    } catch (e) {
+      setError("Erro ao carregar local: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadLocalPardal() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/collection_pardal.json");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setCharacter(json.data.character || null);
+      setData(json.data.data || []);
+      setValues(json.data.values || null);
+    } catch (e) {
+      setError("Erro ao carregar local: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadLocalAle() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/collection_ale.json");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setCharacter(json.data.character || null);
+      setData(json.data.data || []);
+      setValues(json.data.values || null);
+    } catch (e) {
+      setError("Erro ao carregar local: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const totalPendingPower = useMemo(() => {
     return totalCollectionPower - earnedCollectionPower;
   }, [totalCollectionPower, earnedCollectionPower]);
 
   return (
     <div className="flex flex-col gap-6">
-      <form onSubmit={handleSubmit} className="flex gap-2 self-center">
+  <div className="flex gap-2">
+    <button onClick={loadLocal} className="cursor-pointer bg-violet-300 hover:bg-violet-400 active:bg-violet-400 text-violet-900 text-sm font-semibold px-4 py-2 rounded-lg transition-colors">🧪 Forroh</button>
+    <button onClick={loadLocalPardal} className="cursor-pointer bg-orange-200 hover:bg-orange-300 active:bg-orange-400 text-orange-900 text-sm font-semibold px-4 py-2 rounded-lg transition-colors">🐦 Pardal</button>
+    <button onClick={loadLocalAle} className="cursor-pointer bg-orange-200 hover:bg-orange-300 active:bg-orange-400 text-orange-900 text-sm font-semibold px-4 py-2 rounded-lg transition-colors">👴 AleRox</button>
+  </div>
+      {/* <form onSubmit={handleSubmit} className="flex gap-2 self-center">
         <input
           value={inputName}
           onChange={e => setInputName(e.target.value)}
@@ -502,7 +558,7 @@ export default function CollectionTracker() {
         >
           Carregar
         </button>
-      </form>
+      </form> */}
 
       {character && (
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-4 py-3 rounded-xl bg-zinc-100 dark:bg-zinc-800/60 text-sm">
@@ -566,7 +622,7 @@ export default function CollectionTracker() {
           >
             📊 Resumo de Recompensas
           </button>
-          {values?.length > 0 && (
+          {1 > 0 && (
             <button
               onClick={() => setShowTotalPower(true)}
               className="bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
@@ -680,9 +736,9 @@ export default function CollectionTracker() {
         </div>
       )}
 
-      {!data && !loading && !error && (
+      {/* {!data && !loading && !error && (
         <p className="text-sm text-zinc-500 text-center py-12">Digite o nome do personagem e clique em Carregar.</p>
-      )}
+      )} */}
       {loading && (
         <div className="flex items-center justify-center py-20 gap-3 text-zinc-500">
           <div className="w-5 h-5 border-2 border-zinc-300 border-t-blue-500 rounded-full animate-spin" />
